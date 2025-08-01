@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generatore Turni Miniquad</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
+    <style>
+        :root {
+            --primary-color: #007bff; --secondary-color: #6c757d; --background-color: #f8f9fa;
+            --text-color: #212529; --border-color: #dee2e6; --weekend-bg: #fff3cd;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--background-color); color: var(--text-color); margin: 0; padding: 20px; line-height: 1.6;
+        }
+        .container { max-width: 1200px; margin: auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1, h2, h3 { color: var(--primary-color); border-bottom: 2px solid var(--primary-color); padding-bottom: 10px; margin-top: 0; }
+        h2, h3 { margin-top: 30px; }
+        .input-group, .slider-group { margin-bottom: 20px; }
+        label { font-weight: bold; display: block; margin-bottom: 5px; }
+        input[type="date"] { width: 100%; padding: 10px; border-radius: 4px; border: 1px solid var(--border-color); box-sizing: border-box; }
+        .btn {
+            background-color: var(--primary-color); color: white; padding: 12px 20px; border: none; border-radius: 5px;
+            cursor: pointer; font-size: 16px; transition: background-color 0.3s; margin-right: 10px;
+        }
+        .btn:hover { background-color: #0056b3; }
+        .btn-secondary { background-color: var(--secondary-color); }
+        .btn-secondary:hover { background-color: #5a6268; }
+        .btn-success { background-color: #28a745; }
+        .btn-success:hover { background-color: #218838; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid var(--border-color); padding: 12px; text-align: center; }
+        th { background-color: var(--primary-color); color: white; }
+        td.weekend { background-color: var(--weekend-bg); }
+        .unavailability-table td { padding: 5px; }
+        .unavailability-table input[type="checkbox"] { width: 20px; height: 20px; }
+        .table-responsive { overflow-x: auto; }
+        #proposals { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
+        .proposal-card { border: 1px solid var(--border-color); border-radius: 5px; padding: 15px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
+        .hidden { display: none; }
+        #error-message, #loading-message {
+            color: #dc3545; font-weight: bold; padding: 15px; background-color: #f8d7da;
+            border: 1px solid #f5c6cb; border-radius: 5px; margin-top: 20px;
+        }
+        #loading-message { color: #004085; background-color: #cce5ff; border-color: #b8daff; }
+        .summary-section, #refine-section { background-color: #e9ecef; padding: 20px; border-radius: 5px; margin-top: 20px; }
+        .slider-group { display: flex; align-items: center; gap: 15px; }
+        .slider-group label { flex-basis: 100px; flex-shrink: 0; margin-bottom: 0; }
+        .slider-group input[type="range"] { flex-grow: 1; }
+        .swappable { cursor: pointer; background-color: #ffc107 !important; color: black; }
+        .selected-for-swap { outline: 3px solid #dc3545; box-shadow: 0 0 10px #dc3545; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🗓️ Generatore Turni Miniquad</h1>
+        <div id="input-section">
+            <h2>1. Dati Iniziali</h2>
+            <div class="input-group">
+                <label for="start-date">Seleziona il Lunedì di inizio settimana:</label>
+                <input type="date" id="start-date" required>
+            </div>
+            <h2>2. Indisponibilità (Vincolo Imprescindibile)</h2>
+            <p>Seleziona le caselle per indicare quando un lavoratore <strong>non</strong> è disponibile.</p>
+            <div class="table-responsive">
+                <table class="unavailability-table">
+                    <thead>
+                        <tr>
+                            <th>Lavoratore</th>
+                            <th>Lun (10-19)</th><th>Lun (19-24)</th><th>Mar (10-19)</th><th>Mar (19-24)</th><th>Mer (10-19)</th><th>Mer (19-24)</th>
+                            <th>Gio (10-19)</th><th>Gio (19-24)</th><th>Ven (10-19)</th><th>Ven (19-24)</th><th class="weekend">Sab (10-19)</th>
+                            <th class="weekend">Sab (19-24)</th><th class="weekend">Dom (10-19)</th><th class="weekend">Dom (15-24)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="unavailability-body"></tbody>
+                </table>
+            </div>
+            <br>
+            <button id="generate-btn" class="btn">1. Genera Turni Equi</button>
+            <div id="loading-message" class="hidden">Sto calcolando, attendere prego...</div>
+            <div id="error-message" class="hidden"></div>
+        </div>
+        <div id="proposals-section" class="hidden">
+            <h2>3. Risultati e Raffinamento</h2>
+            <p>Scegli una delle turnazioni generate o modifica la distribuzione delle ore qui sotto.</p>
+            <div id="proposals"></div>
+        </div>
+        <div id="refine-section" class="hidden">
+            <h3>Raffina Distribuzione Ore</h3>
+            <p>Usa gli slider per impostare un obiettivo di ore per ciascun lavoratore.</p>
+            <div id="sliders-container"></div>
+            <button id="refine-btn" class="btn btn-success">2. Rigenera con Ore Personalizzate</button>
+        </div>
+        <div id="final-schedule-section" class="hidden">
+            <h2>✅ Turnazione Definitiva</h2>
+            <div id="final-schedule-controls">
+                <button id="modify-btn" class="btn btn-secondary">Modifica Turno</button>
+                <button id="print-btn" class="btn btn-secondary">Stampa come Immagine (PNG)</button>
+                <button id="pdf-btn" class="btn btn-secondary">Scarica PDF Dettagliato</button>
+            </div>
+            <div id="final-schedule-render"></div>
+            <div id="summary" class="summary-section"></div>
+        </div>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // --- Variabili Globali e Costanti ---
+    const WORKERS = ['Giovanni', 'Domenico', 'Gabriele'];
+    const SHIFTS = [
+        { day: 'Lunedì', name: 'Mattina', start: '10:00', end: '19:00', hours: 9, isWeekend: false }, { day: 'Lunedì', name: 'Sera', start: '19:00', end: '24:00', hours: 5, isWeekend: false },
+        { day: 'Martedì', name: 'Mattina', start: '10:00', end: '19:00', hours: 9, isWeekend: false }, { day: 'Martedì', name: 'Sera', start: '19:00', end: '24:00', hours: 5, isWeekend: false },
+        { day: 'Mercoledì', name: 'Mattina', start: '10:00', end: '19:00', hours: 9, isWeekend: false }, { day: 'Mercoledì', name: 'Sera', start: '19:00', end: '24:00', hours: 5, isWeekend: false },
+        { day: 'Giovedì', name: 'Mattina', start: '10:00', end: '19:00', hours: 9, isWeekend: false }, { day: 'Giovedì', name: 'Sera', start: '19:00', end: '24:00', hours: 5, isWeekend: false },
+        { day: 'Venerdì', name: 'Mattina', start: '10:00', end: '19:00', hours: 9, isWeekend: false }, { day: 'Venerdì', name: 'Sera', start: '19:00', end: '24:00', hours: 5, isWeekend: false },
+        { day: 'Sabato', name: 'Mattina', start: '10:00', end: '19:00', hours: 9, isWeekend: true }, { day: 'Sabato', name: 'Sera', start: '19:00', end: '24:00', hours: 5, isWeekend: true },
+        { day: 'Domenica', name: 'Mattina', start: '10:00', end: '19:00', hours: 9, isWeekend: true }, { day: 'Domenica', name: 'Sera', start: '15:00', end: '24:00', hours: 9, isWeekend: true },
+    ];
+    const SHIFT_POINTS = { weekday: 1, weekend: 1.5 };
+    const MAX_ATTEMPTS = 50000;
+    let finalScheduleData = null, unavailabilityData = {}, isModifyMode = false, firstSwapCell = null;
+
+    // --- Funzione di Inizializzazione Principale ---
+    function initialize() {
+        if (typeof window.jspdf === 'undefined' || typeof window.html2canvas === 'undefined') {
+            alert("Errore critico: le librerie esterne non sono state caricate. Verifica la connessione a internet.");
+            return; 
+        }
+
+        const unavailabilityBody = document.getElementById('unavailability-body');
+        const slidersContainer = document.getElementById('sliders-container');
+
+        // Creazione robusta della tabella indisponibilità
+        const fragment = document.createDocumentFragment();
+        WORKERS.forEach(worker => {
+            const row = document.createElement('tr');
+            row.innerHTML = `<td>${worker}</td>`;
+            SHIFTS.forEach((shift, index) => {
+                const cell = document.createElement('td');
+                if (shift.isWeekend) cell.className = 'weekend';
+                cell.innerHTML = `<input type="checkbox" data-worker="${worker}" data-shift-index="${index}">`;
+                row.appendChild(cell);
+            });
+            fragment.appendChild(row);
+        });
+        unavailabilityBody.appendChild(fragment);
+
+        // Imposta data di default
+        const today = new Date();
+        const monday = new Date(today);
+        monday.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
+        document.getElementById('start-date').valueAsDate = monday;
+
+        // Creazione slider
+        slidersContainer.innerHTML = WORKERS.map(worker => `
+            <div class="slider-group">
+                <label for="${worker.toLowerCase()}-hours">${worker}:</label>
+                <input type="range" id="${worker.toLowerCase()}-hours" min="0" max="60" value="34" step="1">
+                <span id="${worker.toLowerCase()}-hours-value">34</span> ore
+            </div>`).join('');
+        
+        // Aggiunta listeners
+        document.getElementById('generate-btn').addEventListener('click', () => runGeneration(null));
+        document.getElementById('refine-btn').addEventListener('click', () => {
+            const customTargets = {};
+            WORKERS.forEach(worker => customTargets[worker] = parseInt(document.getElementById(`${worker.toLowerCase()}-hours`).value, 10));
+            runGeneration(customTargets);
+        });
+        slidersContainer.querySelectorAll('input[type="range"]').forEach(slider => {
+            slider.addEventListener('input', e => document.getElementById(`${e.target.id}-value`).textContent = e.target.value);
+        });
+        document.getElementById('pdf-btn').addEventListener('click', downloadPDF);
+        document.getElementById('print-btn').addEventListener('click', printAsImage);
+        document.getElementById('modify-btn').addEventListener('click', toggleModifyMode);
+    }
+    
+    // --- Logica di Generazione Turni ---
+    function readUnavailabilities() {
+        unavailabilityData = {};
+        document.querySelectorAll('#unavailability-body input[type="checkbox"]:checked').forEach(input => {
+            const { worker, shiftIndex } = input.dataset;
+            if (!unavailabilityData[shiftIndex]) unavailabilityData[shiftIndex] = [];
+            unavailabilityData[shiftIndex].push(worker);
+        });
+    }
+    
+    function runGeneration(customTargets = null) {
+        readUnavailabilities();
+        document.getElementById('loading-message').classList.remove('hidden');
+        document.getElementById('error-message').classList.add('hidden');
+        document.getElementById('proposals').innerHTML = '';
+        
+        setTimeout(() => {
+            let solution1 = generateSchedule(customTargets, true);
+            let solution2 = generateSchedule(customTargets, true);
+            
+            if (!solution1 && customTargets) {
+                solution1 = generateSchedule(customTargets, false);
+                solution2 = generateSchedule(customTargets, false);
+            }
+
+            document.getElementById('loading-message').classList.add('hidden');
+
+            if (solution1 && solution2) {
+                displayProposals([solution1, solution2]);
+                document.getElementById('proposals-section').classList.remove('hidden');
+                document.getElementById('refine-section').classList.remove('hidden');
+            } else {
+                document.getElementById('error-message').textContent = "Errore: Impossibile generare un orario. Prova a ridurre i vincoli di indisponibilità o a modificare gli obiettivi di ore.";
+                document.getElementById('error-message').classList.remove('hidden');
+            }
+        }, 50);
+    }
+
+    function generateSchedule(customTargets, strictWeekendRule) {
+        let attempts = 0, bestSchedule = null, minVariance = Infinity;
+        while (attempts < MAX_ATTEMPTS) {
+            let schedule = new Array(SHIFTS.length).fill(null), workerStats = {};
+            WORKERS.forEach(w => { workerStats[w] = { hours: 0, points: 0, weekendShifts: 0 }; });
+            let shiftIndexes = [...Array(SHIFTS.length).keys()].sort(() => 0.5 - Math.random());
+            let possible = true;
+            for (const shiftIndex of shiftIndexes) {
+                const shift = SHIFTS[shiftIndex], unavailableWorkers = unavailabilityData[shiftIndex] || [];
+                let availableWorkers = WORKERS.filter(w => !unavailableWorkers.includes(w));
+                if (availableWorkers.length === 0) { possible = false; break; }
+                availableWorkers.sort((a, b) => {
+                    if (customTargets) return (workerStats[a].hours / (customTargets[a] || 1)) - (workerStats[b].hours / (customTargets[b] || 1));
+                    return (workerStats[a].points - workerStats[b].points) || (workerStats[a].hours - workerStats[b].hours);
+                });
+                const assignedWorker = availableWorkers[0];
+                schedule[shiftIndex] = assignedWorker;
+                workerStats[assignedWorker].hours += shift.hours;
+                workerStats[assignedWorker].points += shift.isWeekend ? SHIFT_POINTS.weekend : SHIFT_POINTS.weekday;
+                if (shift.isWeekend) workerStats[assignedWorker].weekendShifts++;
+            }
+            if (possible && (!strictWeekendRule || checkWeekendConstraint(workerStats))) {
+                const hours = WORKERS.map(w => workerStats[w].hours), variance = getVariance(hours);
+                if (variance < minVariance) { minVariance = variance; bestSchedule = schedule; }
+            }
+            attempts++;
+        }
+        return bestSchedule;
+    }
+
+    function checkWeekendConstraint(stats) {
+        return WORKERS.every(worker => {
+            const isUnavailableForAllWeekend = [10, 11, 12, 13].every(idx => (unavailabilityData[idx] || []).includes(worker));
+            return isUnavailableForAllWeekend || stats[worker].weekendShifts > 0;
+        });
+    }
+
+    function getVariance(numbers) {
+        const mean = numbers.reduce((a, b) => a + b, 0) / numbers.length;
+        return numbers.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / numbers.length;
+    }
+    
+    // --- Funzioni di Visualizzazione e UI ---
+    function displayProposals(schedules) {
+        const proposalsContainer = document.getElementById('proposals');
+        proposalsContainer.innerHTML = '';
+        schedules.forEach((schedule, index) => {
+            const card = document.createElement('div');
+            card.className = 'proposal-card';
+            card.innerHTML = `<h4>Proposta ${index + 1}</h4>`;
+            card.appendChild(createScheduleTable(schedule));
+            card.appendChild(createStatsTable(schedule));
+            const chooseBtn = document.createElement('button');
+            chooseBtn.textContent = `Scegli Questa`;
+            chooseBtn.className = 'btn btn-success';
+            chooseBtn.onclick = () => selectSchedule(schedule);
+            card.appendChild(chooseBtn);
+            proposalsContainer.appendChild(card);
+        });
+    }
+
+    function createScheduleTable(scheduleData) {
+        const table = document.createElement('table');
+        let headerHtml = '<thead><tr><th>Giorno</th><th>Mattina</th><th>Sera</th></tr></thead>';
+        let bodyHtml = '<tbody>';
+        ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'].forEach(day => {
+            const isWk = day === 'Sabato' || day === 'Domenica', morningShift = SHIFTS.find(s => s.day === day && s.name === 'Mattina'), eveningShift = SHIFTS.find(s => s.day === day && s.name === 'Sera');
+            const morningWorker = scheduleData[SHIFTS.indexOf(morningShift)] || '---', eveningWorker = scheduleData[SHIFTS.indexOf(eveningShift)] || '---';
+            bodyHtml += `<tr><td ${isWk ? 'class="weekend"' : ''}><b>${day}</b></td>
+                <td ${isWk ? 'class="weekend"' : ''} data-day="${day}" data-shift-name="Mattina">${morningWorker}<br><small>${morningShift.start}-${morningShift.end}</small></td>
+                <td ${isWk ? 'class="weekend"' : ''} data-day="${day}" data-shift-name="Sera">${eveningWorker}<br><small>${eveningShift.start}-${eveningShift.end}</small></td></tr>`;
+        });
+        table.innerHTML = headerHtml + bodyHtml + '</tbody>';
+        return table;
+    }
+
+    function createStatsTable(scheduleData) {
+        const table = document.createElement('table'), stats = calculateStats(scheduleData);
+        table.innerHTML = '<thead><tr><th>Lavoratore</th><th>Ore Totali</th><th>Turni Weekend</th></tr></thead><tbody>';
+        WORKERS.forEach(worker => table.innerHTML += `<tr><td>${worker}</td><td>${stats[worker].hours}</td><td>${stats[worker].weekendShifts}</td></tr>`);
+        table.innerHTML += '</tbody>';
+        return table;
+    }
+
+    function calculateStats(scheduleData) {
+        let workerStats = {};
+        WORKERS.forEach(w => { workerStats[w] = { hours: 0, weekendShifts: 0, shifts: [] }; });
+        scheduleData.forEach((worker, index) => {
+            if (worker) {
+                const shift = SHIFTS[index];
+                workerStats[worker].hours += shift.hours;
+                workerStats[worker].shifts.push(shift);
+                if (shift.isWeekend) workerStats[worker].weekendShifts++;
+            }
+        });
+        return workerStats;
+    }
+
+    function selectSchedule(schedule) {
+        finalScheduleData = schedule;
+        document.getElementById('input-section').classList.add('hidden');
+        document.getElementById('proposals-section').classList.add('hidden');
+        document.getElementById('refine-section').classList.add('hidden');
+        renderFinalSchedule();
+        document.getElementById('final-schedule-section').classList.remove('hidden');
+    }
+    
+    function renderFinalSchedule() {
+        const finalScheduleRender = document.getElementById('final-schedule-render');
+        finalScheduleRender.innerHTML = '';
+        finalScheduleRender.appendChild(createScheduleTable(finalScheduleData));
+        renderSummary();
+    }
+    
+    function renderSummary() {
+        const stats = calculateStats(finalScheduleData), summaryContainer = document.getElementById('summary');
+        let summaryHtml = `<h3>Riepilogo Dettagliato</h3><h4>Dettaglio Turni e Ore</h4><ul>`;
+        WORKERS.forEach(worker => {
+            summaryHtml += `<li><b>${worker} (Ore totali: ${stats[worker].hours})</b><ul>`;
+            stats[worker].shifts.sort((a,b) => SHIFTS.indexOf(a) - SHIFTS.indexOf(b)).forEach(shift => {
+                 summaryHtml += `<li>${shift.day} (${shift.start}-${shift.end}) = ${shift.hours} ore</li>`;
+            });
+            summaryHtml += `</ul></li>`;
+        });
+        summaryHtml += `</ul><h4>Indisponibilità Considerate</h4>`;
+        readUnavailabilities();
+        const usedUnavailabilities = Object.entries(unavailabilityData).flatMap(([shiftIndex, workers]) => 
+            workers.map(worker => `<li>${worker} non disponibile ${SHIFTS[shiftIndex].day} (${SHIFTS[shiftIndex].name})</li>`)
+        );
+        summaryHtml += usedUnavailabilities.length > 0 ? `<ul>${usedUnavailabilities.join('')}</ul>` : `<p>Nessuna indisponibilità specificata.</p>`;
+        summaryContainer.innerHTML = summaryHtml;
+    }
+
+    // --- Funzioni di Esportazione e Modifica ---
+    function downloadPDF() {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+        doc.text(getTitle(), 14, 15);
+        doc.autoTable({ html: '#final-schedule-render table', startY: 25, theme: 'grid', headStyles: { fillColor: [0, 123, 255] } });
+        doc.text(getSummaryText(), 14, doc.autoTable.previous.finalY + 10);
+        doc.save(getFileName('pdf'));
+    }
+    
+    function printAsImage() {
+        const finalScheduleRender = document.getElementById('final-schedule-render');
+        const header = document.createElement('h2');
+        header.innerText = getTitle();
+        header.style.textAlign = 'center';
+        header.style.marginBottom = '15px';
+        finalScheduleRender.insertBefore(header, finalScheduleRender.firstChild);
+        window.html2canvas(finalScheduleRender, { scale: 2 }).then(canvas => {
+            const link = document.createElement('a');
+            link.download = getFileName('png');
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            finalScheduleRender.removeChild(header);
+        });
+    }
+    
+    function toggleModifyMode() {
+        isModifyMode = !isModifyMode;
+        const modifyBtn = document.getElementById('modify-btn');
+        modifyBtn.textContent = isModifyMode ? 'Annulla Modifica' : 'Modifica Turno';
+        modifyBtn.classList.toggle('btn-success', isModifyMode);
+        document.querySelectorAll('#final-schedule-render td[data-day]').forEach(cell => {
+            cell.classList.toggle('swappable', isModifyMode);
+            cell.removeEventListener('click', handleSwapClick);
+            if (isModifyMode) cell.addEventListener('click', handleSwapClick);
+        });
+        if (!isModifyMode) resetSwapSelection();
+    }
+
+    function handleSwapClick(event) {
+        const clickedCell = event.currentTarget;
+        if (!firstSwapCell) {
+            firstSwapCell = clickedCell;
+            clickedCell.classList.add('selected-for-swap');
+        } else if (firstSwapCell !== clickedCell) {
+            const shiftIndex1 = SHIFTS.findIndex(s => s.day === firstSwapCell.dataset.day && s.name === firstSwapCell.dataset.shiftName);
+            const shiftIndex2 = SHIFTS.findIndex(s => s.day === clickedCell.dataset.day && s.name === clickedCell.dataset.shiftName);
+            [finalScheduleData[shiftIndex1], finalScheduleData[shiftIndex2]] = [finalScheduleData[shiftIndex2], finalScheduleData[shiftIndex1]];
+            renderFinalSchedule();
+            resetModifyMode();
+        } else {
+            resetSwapSelection();
+        }
+    }
+    
+    function resetModifyMode() {
+        isModifyMode = false;
+        document.getElementById('modify-btn').textContent = 'Modifica Turno';
+        document.getElementById('modify-btn').classList.remove('btn-success');
+        document.querySelectorAll('.swappable').forEach(cell => {
+            cell.classList.remove('swappable', 'selected-for-swap');
+            cell.removeEventListener('click', handleSwapClick);
+        });
+        firstSwapCell = null;
+    }
+    
+    function resetSwapSelection() {
+         if (firstSwapCell) {
+            firstSwapCell.classList.remove('selected-for-swap');
+            firstSwapCell = null;
+        }
+    }
+
+    // --- Funzioni Utili ---
+    function getTitle() {
+        const dateInput = document.getElementById('start-date').value;
+        return `Turni Miniquad della settimana da ${new Date(dateInput).toLocaleDateString('it-IT')}`;
+    }
+    
+    function getFileName(extension) {
+        return `Turni_Miniquad_${document.getElementById('start-date').value}.${extension}`;
+    }
+
+    function getSummaryText() {
+        const stats = calculateStats(finalScheduleData);
+        let summaryLines = [];
+        WORKERS.forEach(worker => {
+            summaryLines.push(`\n${worker} (Ore totali: ${stats[worker].hours})`);
+            stats[worker].shifts.sort((a,b) => SHIFTS.indexOf(a) - SHIFTS.indexOf(b)).forEach(shift => {
+                 summaryLines.push(`  - ${shift.day} (${shift.start}-${shift.end}) = ${shift.hours} ore`);
+            });
+        });
+        return summaryLines;
+    }
+
+    // --- Avvio dell'applicazione ---
+    initialize();
+});
+</script>
+
+</body>
+</html>
