@@ -24,7 +24,7 @@
         input[type="date"] { width: 100%; padding: 10px; border-radius: 4px; border: 1px solid var(--border-color); box-sizing: border-box; }
         .btn {
             background-color: var(--primary-color); color: white; padding: 12px 20px; border: none; border-radius: 5px;
-            cursor: pointer; font-size: 16px; transition: background-color 0.3s; margin-right: 10px;
+            cursor: pointer; font-size: 16px; transition: background-color 0.3s; margin-right: 10px; margin-top: 5px;
         }
         .btn:hover { background-color: #0056b3; }
         .btn-secondary { background-color: var(--secondary-color); }
@@ -64,8 +64,8 @@
                 <label for="start-date">Seleziona il Lunedì di inizio settimana:</label>
                 <input type="date" id="start-date" required>
             </div>
-            <h2>2. Indisponibilità (Vincolo Imprescindibile)</h2>
-            <p>Seleziona le caselle per indicare quando un lavoratore <strong>non</strong> è disponibile.</p>
+            <h2>2. Indisponibilità</h2>
+            <p>Seleziona le caselle per indicare quando un lavoratore <strong>non</strong> è disponibile (vincolo imprescindibile).</p>
             <div class="table-responsive">
                 <table class="unavailability-table">
                     <thead>
@@ -81,6 +81,7 @@
             </div>
             <br>
             <button id="generate-btn" class="btn">1. Genera Turni Equi</button>
+            <button id="generate-double-btn" class="btn btn-secondary">1b. Consenti Doppio Turno</button>
             <div id="loading-message" class="hidden">Sto calcolando, attendere prego...</div>
             <div id="error-message" class="hidden"></div>
         </div>
@@ -123,6 +124,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const SHIFT_POINTS = { weekday: 1, weekend: 1.5 };
     const MAX_ATTEMPTS = 50000;
     let finalScheduleData = null, unavailabilityData = {}, isModifyMode = false, firstSwapCell = null;
+    let allowDoubleShiftsMode = false; // Memorizza la modalità doppio turno
 
     // --- Funzione di Inizializzazione Principale ---
     function initialize() {
@@ -132,9 +134,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         const unavailabilityBody = document.getElementById('unavailability-body');
-        const slidersContainer = document.getElementById('sliders-container');
-
-        // Creazione robusta della tabella indisponibilità
         const fragment = document.createDocumentFragment();
         WORKERS.forEach(worker => {
             const row = document.createElement('tr');
@@ -149,13 +148,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         unavailabilityBody.appendChild(fragment);
 
-        // Imposta data di default
         const today = new Date();
         const monday = new Date(today);
         monday.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
         document.getElementById('start-date').valueAsDate = monday;
 
-        // Creazione slider
+        const slidersContainer = document.getElementById('sliders-container');
         slidersContainer.innerHTML = WORKERS.map(worker => `
             <div class="slider-group">
                 <label for="${worker.toLowerCase()}-hours">${worker}:</label>
@@ -163,12 +161,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 <span id="${worker.toLowerCase()}-hours-value">34</span> ore
             </div>`).join('');
         
-        // Aggiunta listeners
-        document.getElementById('generate-btn').addEventListener('click', () => runGeneration(null));
+        document.getElementById('generate-btn').addEventListener('click', () => runGeneration(null, false));
+        document.getElementById('generate-double-btn').addEventListener('click', () => runGeneration(null, true));
         document.getElementById('refine-btn').addEventListener('click', () => {
             const customTargets = {};
             WORKERS.forEach(worker => customTargets[worker] = parseInt(document.getElementById(`${worker.toLowerCase()}-hours`).value, 10));
-            runGeneration(customTargets);
+            runGeneration(customTargets, allowDoubleShiftsMode);
         });
         slidersContainer.querySelectorAll('input[type="range"]').forEach(slider => {
             slider.addEventListener('input', e => document.getElementById(`${e.target.id}-value`).textContent = e.target.value);
@@ -188,19 +186,20 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    function runGeneration(customTargets = null) {
+    function runGeneration(customTargets, allowDoubleShifts) {
+        allowDoubleShiftsMode = allowDoubleShifts; // Salva la modalità corrente
         readUnavailabilities();
         document.getElementById('loading-message').classList.remove('hidden');
         document.getElementById('error-message').classList.add('hidden');
         document.getElementById('proposals').innerHTML = '';
         
         setTimeout(() => {
-            let solution1 = generateSchedule(customTargets, true);
-            let solution2 = generateSchedule(customTargets, true);
+            let solution1 = generateSchedule(customTargets, true, allowDoubleShifts);
+            let solution2 = generateSchedule(customTargets, true, allowDoubleShifts);
             
             if (!solution1 && customTargets) {
-                solution1 = generateSchedule(customTargets, false);
-                solution2 = generateSchedule(customTargets, false);
+                solution1 = generateSchedule(customTargets, false, allowDoubleShifts);
+                solution2 = generateSchedule(customTargets, false, allowDoubleShifts);
             }
 
             document.getElementById('loading-message').classList.add('hidden');
@@ -216,7 +215,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 50);
     }
 
-    function generateSchedule(customTargets, strictWeekendRule) {
+    function generateSchedule(customTargets, strictWeekendRule, allowDoubleShifts) {
         let attempts = 0, bestSchedule = null, minVariance = Infinity;
         while (attempts < MAX_ATTEMPTS) {
             let schedule = new Array(SHIFTS.length).fill(null), workerStats = {};
@@ -224,18 +223,39 @@ document.addEventListener('DOMContentLoaded', function() {
             let shiftIndexes = [...Array(SHIFTS.length).keys()].sort(() => 0.5 - Math.random());
             let possible = true;
             for (const shiftIndex of shiftIndexes) {
-                const shift = SHIFTS[shiftIndex], unavailableWorkers = unavailabilityData[shiftIndex] || [];
+                const shift = SHIFTS[shiftIndex];
+                const unavailableWorkers = unavailabilityData[shiftIndex] || [];
                 let availableWorkers = WORKERS.filter(w => !unavailableWorkers.includes(w));
                 if (availableWorkers.length === 0) { possible = false; break; }
+                
                 availableWorkers.sort((a, b) => {
                     if (customTargets) return (workerStats[a].hours / (customTargets[a] || 1)) - (workerStats[b].hours / (customTargets[b] || 1));
                     return (workerStats[a].points - workerStats[b].points) || (workerStats[a].hours - workerStats[b].hours);
                 });
-                const assignedWorker = availableWorkers[0];
-                schedule[shiftIndex] = assignedWorker;
-                workerStats[assignedWorker].hours += shift.hours;
-                workerStats[assignedWorker].points += shift.isWeekend ? SHIFT_POINTS.weekend : SHIFT_POINTS.weekday;
-                if (shift.isWeekend) workerStats[assignedWorker].weekendShifts++;
+                
+                let workerAssigned = false;
+                for (const worker of availableWorkers) {
+                    // Punto 1: Logica per evitare il doppio turno
+                    if (!allowDoubleShifts) {
+                        const isMorning = shift.name === 'Mattina';
+                        const pairShiftIndex = isMorning ? shiftIndex + 1 : shiftIndex - 1;
+                        if (SHIFTS[pairShiftIndex] && SHIFTS[pairShiftIndex].day === shift.day) {
+                            if (schedule[pairShiftIndex] === worker) {
+                                continue; // Salta questo lavoratore, ha già l'altro turno
+                            }
+                        }
+                    }
+                    
+                    // Se il lavoratore è valido, assegnalo e esci dal loop
+                    schedule[shiftIndex] = worker;
+                    workerStats[worker].hours += shift.hours;
+                    workerStats[worker].points += shift.isWeekend ? SHIFT_POINTS.weekend : SHIFT_POINTS.weekday;
+                    if (shift.isWeekend) workerStats[worker].weekendShifts++;
+                    workerAssigned = true;
+                    break;
+                }
+
+                if (!workerAssigned) { possible = false; break; }
             }
             if (possible && (!strictWeekendRule || checkWeekendConstraint(workerStats))) {
                 const hours = WORKERS.map(w => workerStats[w].hours), variance = getVariance(hours);
