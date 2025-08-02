@@ -132,8 +132,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (typeof window.jspdf === 'undefined' || typeof window.html2canvas === 'undefined') {
             alert("Errore critico: le librerie non sono state caricate."); return;
         }
-        buildUnavailabilityTable();
         buildSpecialDaysSelector();
+        buildUnavailabilityTable(); // Chiamata dopo il selettore giorni speciali
         setDefaultDate();
         buildSliders();
         setupEventListeners();
@@ -142,21 +142,29 @@ document.addEventListener('DOMContentLoaded', function() {
     function buildUnavailabilityTable() {
         const head = document.getElementById('unavailability-head');
         const body = document.getElementById('unavailability-body');
+        const shiftConfig = buildShiftConfig();
+        const { shifts, highlightDays } = shiftConfig;
+
         let headHTML = '<tr><th>Lavoratore</th>';
-        BASE_SHIFTS.forEach(shift => headHTML += `<th>${shift.day.substring(0,3)} (${shift.start}-${shift.end})</th>`);
+        shifts.forEach(shift => {
+            const highlightClass = highlightDays.has(shift.day) ? 'class="highlight-day"' : '';
+            headHTML += `<th ${highlightClass}>${shift.day.substring(0,3)} (${shift.start}-${shift.end})</th>`;
+        });
         head.innerHTML = headHTML + '</tr>';
         
         const bodyFragment = document.createDocumentFragment();
         WORKERS.forEach(worker => {
             const row = document.createElement('tr');
             row.innerHTML = `<td>${worker}</td>`;
-            BASE_SHIFTS.forEach((shift, index) => {
+            shifts.forEach((shift, index) => {
                 const cell = document.createElement('td');
+                if (highlightDays.has(shift.day)) cell.className = 'highlight-day';
                 cell.innerHTML = `<input type="checkbox" data-worker="${worker}" data-shift-index="${index}">`;
                 row.appendChild(cell);
             });
             bodyFragment.appendChild(row);
         });
+        body.innerHTML = ''; // Pulisce il corpo prima di aggiungere
         body.appendChild(bodyFragment);
     }
 
@@ -169,6 +177,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 <label for="special-${day.toLowerCase()}">${day}</label>
             </div>
         `).join('');
+        // Aggiunge l'evento per ridisegnare la tabella
+        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', buildUnavailabilityTable);
+        });
     }
 
     function setDefaultDate() {
